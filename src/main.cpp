@@ -202,7 +202,7 @@ int main() {
   }
 
   int lane = 1;
-  double ref_vel = 49.5;
+  double ref_vel = 0;
 
   h.onMessage([&ref_vel,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -243,11 +243,45 @@ int main() {
 
           	int prev_size = previous_path_x.size();
 
-            vector<double> next_x_vals;
-          	vector<double> next_y_vals;
-
 
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
+          	if(prev_size > 0)
+            {
+                car_s = end_path_s;
+            }
+
+            bool too_close = false;
+
+          	// Find ref_v to use
+          	for(int i = 0; i < sensor_fusion.size(); i++)
+            {
+                // Car is in my lane
+                float d = sensor_fusion[i][6];
+                if (d < (2+4*lane+2) && d > (2+4*lane-2))
+                {
+                    double vx = sensor_fusion[i][3];
+                    double vy = sensor_fusion[i][4];
+                    double check_speed = sqrt(vx*vx+vy*vy);
+                    double check_car_s = sensor_fusion[i][5];
+
+                    check_car_s += prev_size*0.02*check_speed;
+                    if (check_car_s > car_s && check_car_s-car_s < 30)
+                    {
+                        // Do some logic here
+                        //ref_vel = 29.5;
+                        too_close = true;
+                    }
+                }
+            }
+
+            if (too_close)
+            {
+                ref_vel -= 0.224;
+            }
+            else if (ref_vel < 49.5)
+            {
+                ref_vel += 0.224;
+            }
 
             // Create a list of widely spaced (x,y) waypoints, evenly spaced at 30m
             // Later we will interpolate these waypoints with a spline and fill it in with more points that control speed
@@ -319,6 +353,9 @@ int main() {
             // Set (x,y) points to the spline
             s.set_points(ptsx, ptsy);
 
+            vector<double> next_x_vals;
+            vector<double> next_y_vals;
+
             // Start with all of the previous path points from last time
             for (int i = 0; i < previous_path_x.size(); i++)
             {
@@ -356,7 +393,7 @@ int main() {
                 next_x_vals.push_back(x_point);
                 next_y_vals.push_back(y_point);
             }
-            
+
             json msgJson;
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
