@@ -164,6 +164,75 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
+bool lineIsBusy(double car_s, int lane, int prev_size, vector<vector<double>> sensor_fusion)
+{
+    bool isBusy = false;
+    for(int i = 0; i < sensor_fusion.size(); i++) {
+
+        // Car is in right lane
+        float d = sensor_fusion[i][6];
+
+        if (d < (2 + 4 * lane + 2) && d > (2 + 4 * lane - 2))
+        {
+            double vx = sensor_fusion[i][3];
+            double vy = sensor_fusion[i][4];
+            double check_speed = sqrt(vx * vx + vy * vy);
+            double check_car_s = sensor_fusion[i][5];
+
+            check_car_s += prev_size * 0.02 * check_speed;
+
+            if (check_car_s > car_s-4 && check_car_s-car_s < 35)
+            {
+                isBusy = true;
+            }
+        }
+    }
+
+    return isBusy;
+}
+
+void radar(double car_s, int prev_size, vector<vector<double>> sensor_fusion)
+{
+    int step = 5;
+    for (int row = 12; row > -3; --row)
+    {
+        bool l0 = false;
+        bool l1 = false;
+        bool l2 = false;
+
+        for(int i = 0; i < sensor_fusion.size(); i++)
+        {
+
+            float d = sensor_fusion[i][6];
+            double vx = sensor_fusion[i][3];
+            double vy = sensor_fusion[i][4];
+            double check_speed = sqrt(vx * vx + vy * vy);
+            double check_car_s = sensor_fusion[i][5];
+            check_car_s += prev_size * 0.02 * check_speed;
+
+            double deltaS = check_car_s-car_s;
+            if (deltaS < row * step && deltaS > (row - 1) * step)
+            {
+                if (!l0) l0 = (d < (2 + 4 * 0 + 2) && d > (2 + 4 * 0 - 2));
+                if (!l1) l1 = (d < (2 + 4 * 1 + 2) && d > (2 + 4 * 1 - 2));
+                if (!l2) l2 = (d < (2 + 4 * 2 + 2) && d > (2 + 4 * 2 - 2));
+            }
+
+        }
+
+        string lane0 = (l0 ? "x" : " ");
+        string lane1 = (l1 ? "x" : " ");
+        string lane2 = (l2 ? "x" : " ");
+
+        if (row == 0) lane1 = "0";
+
+        cout << "|" << lane0 << "|" << lane1 << "|" << lane2 << "|" << endl;
+    }
+
+    cout << endl;
+    cout << endl;
+}
+
 int main() {
   uWS::Hub h;
 
@@ -203,8 +272,9 @@ int main() {
 
   int lane = 1;
   double ref_vel = 0;
+  double a = 2.4;
 
-  h.onMessage([&ref_vel,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+  h.onMessage([&ref_vel,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&lane, &a](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -243,7 +313,6 @@ int main() {
 
           	int prev_size = previous_path_x.size();
 
-
           	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
           	if(prev_size > 0)
             {
@@ -251,36 +320,107 @@ int main() {
             }
 
             bool too_close = false;
+          	bool follow_car = false;
+            double speed_limit = 49.5;
 
-          	// Find ref_v to use
-          	for(int i = 0; i < sensor_fusion.size(); i++)
+
+            double nearest_car_ds = 500;
+            double nearest_car_speed = 0;
+            double nearest_car_s = 0;
+
+
+            // check line infront of us
+            for(int i = 0; i < sensor_fusion.size(); i++)
             {
-                // Car is in my lane
                 float d = sensor_fusion[i][6];
                 if (d < (2+4*lane+2) && d > (2+4*lane-2))
                 {
                     double vx = sensor_fusion[i][3];
                     double vy = sensor_fusion[i][4];
-                    double check_speed = sqrt(vx*vx+vy*vy);
+                    double check_speed = sqrt(vx*vx+vy*vy) / 0.447;
                     double check_car_s = sensor_fusion[i][5];
+                    //check_car_s += prev_size * 0.02 * check_speed;
 
-                    check_car_s += prev_size*0.02*check_speed;
-                    if (check_car_s > car_s && check_car_s-car_s < 30)
+                    double deltaS = check_car_s - car_s;
+                    if (deltaS > -5)
                     {
-                        // Do some logic here
-                        //ref_vel = 29.5;
-                        too_close = true;
+                        if (nearest_car_ds > deltaS)
+                        {
+                            nearest_car_ds = deltaS;
+                            nearest_car_speed = check_speed;
+                            nearest_car_s = check_car_s;
+                        }
                     }
                 }
             }
 
-            if (too_close)
+            if (nearest_car_ds <= 30)
             {
-                ref_vel -= 0.224;
+                bool follow_car = false;
+                switch (lane)
+                {
+                    case 0: {
+                        if (!lineIsBusy(car_s, 1, prev_size, sensor_fusion)) lane = 1;
+                        else follow_car = true;
+                        break;
+                    }
+                    case 1: {
+                        if (!lineIsBusy(car_s, 2, prev_size, sensor_fusion)) lane = 2;
+                        else if (!lineIsBusy(car_s, 0, prev_size, sensor_fusion)) lane = 0;
+                        else follow_car = true;
+                        break;
+                    }
+                    case 2:
+                    {
+                        if (!lineIsBusy(car_s, 1, prev_size, sensor_fusion)) lane = 1;
+                        else follow_car = true;
+                        break;
+                    }
+                }
+
+                if (follow_car)
+                {
+                    cout << "nearest_car_ds: " << nearest_car_ds << endl;
+                    double deltaV = nearest_car_speed - car_speed;
+                    cout << "delta v: " << deltaV << endl;
+
+                    if (abs(deltaV) < 0.1)
+                    {
+                        ref_vel = nearest_car_speed;
+                        a = 0;
+                    }
+                    else
+                    {
+                        double t = abs(4*(nearest_car_ds - 10) / deltaV);
+                        cout << "t: " << t << endl;
+                        a = deltaV * 0.447 / t;
+                        cout << "a: " << a << endl;
+                    }
+                }
             }
-            else if (ref_vel < 49.5)
+            else a = 2.4;
+
+            if (nearest_car_ds <= 5)
             {
-                ref_vel += 0.224;
+                a = -2.4;
+            }
+
+            double inc = a / 5;
+            if (inc > 0)
+            {
+                if (ref_vel + inc <= 49.5)
+                {
+                    ref_vel += inc;
+                }
+                else ref_vel = 49.5;
+            }
+            else
+            {
+                if (ref_vel + inc > 0)
+                {
+                    ref_vel += inc;
+                }
+                else ref_vel = 0;
             }
 
             // Create a list of widely spaced (x,y) waypoints, evenly spaced at 30m
