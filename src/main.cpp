@@ -181,7 +181,7 @@ bool lineIsBusy(double car_s, int lane, int prev_size, vector<vector<double>> se
 
             check_car_s += prev_size * 0.02 * check_speed;
 
-            if (check_car_s > car_s-4 && check_car_s-car_s < 35)
+            if (check_car_s > car_s-4 && check_car_s-car_s < 10)
             {
                 isBusy = true;
             }
@@ -231,6 +231,69 @@ void radar(double car_s, int prev_size, vector<vector<double>> sensor_fusion)
 
     cout << endl;
     cout << endl;
+}
+
+vector<vector<double>> getAllCarsInLane(double car_s, int lane, int prev_size,  vector<vector<double>> sensor_fusion)
+{
+    vector<vector<double>> ret;
+    for(int i = 0; i < sensor_fusion.size(); i++)
+    {
+        float d = sensor_fusion[i][6];
+        double vx = sensor_fusion[i][3];
+        double vy = sensor_fusion[i][4];
+        double check_speed = sqrt(vx * vx + vy * vy);
+        double check_car_s = sensor_fusion[i][5];
+        check_car_s += prev_size * 0.02 * check_speed;
+
+        if (check_car_s > car_s-4)
+        {
+            if (d < (2 + 4 * lane + 2) && d > (2 + 4 * lane - 2))
+            {
+                ret.push_back(sensor_fusion[i]);
+            }
+        }
+    }
+
+    return ret;
+}
+
+double getCost(double car_s, int lane, int prev_size, vector<vector<double>> sensor_fusion)
+{
+    double cost = 0;
+    auto carsInLane = getAllCarsInLane(car_s, lane, prev_size, sensor_fusion);
+
+    if (carsInLane.size() > 0)
+    {
+        vector<double> nearestCar = carsInLane[0];
+        for(int i = 1; i < carsInLane.size(); i++)
+        {
+            if (carsInLane[i][5] < nearestCar[5])
+            {
+                nearestCar = carsInLane[i];
+            }
+        }
+
+        cost += 200.0 / nearestCar[5];
+
+        if (nearestCar[5] < car_s + 15)
+        {
+            cost += 1000000;
+        }
+    }
+
+    return cost;
+}
+
+vector<double> getAllCosts(double car_s, int prev_size, vector<vector<double>> sensor_fusion)
+{
+    vector<double> costs;
+
+    for (int i = 0; i < 3; i++)
+    {
+        costs.push_back(getCost(car_s, i, prev_size, sensor_fusion));
+    }
+
+    return  costs;
 }
 
 int main() {
@@ -323,7 +386,6 @@ int main() {
           	bool follow_car = false;
             double speed_limit = 49.5;
 
-
             double nearest_car_ds = 500;
             double nearest_car_speed = 0;
             double nearest_car_s = 0;
@@ -354,35 +416,102 @@ int main() {
                 }
             }
 
-            if (nearest_car_ds <= 30)
+            if (nearest_car_ds <= 100)
             {
                 bool follow_car = false;
+                vector<double> costs = getAllCosts(car_s, prev_size, sensor_fusion);
+                double costLane0 = costs[0];
+                double costLane1 = costs[1];
+                double costLane2 = costs[2];
+
+                int minLane = 0;
+
+                if (costLane1 < costLane0)
+                {
+                    if (costLane1 < costLane2)
+                    {
+                        minLane = 1;
+                    }
+                    else if (costLane2 < costLane0)
+                    {
+                        minLane = 2;
+                    }
+                }
+                else if (costLane2 < costLane0)
+                {
+                    minLane = 2;
+                }
+
                 switch (lane)
                 {
                     case 0: {
-                        if (!lineIsBusy(car_s, 1, prev_size, sensor_fusion)) lane = 1;
-                        else follow_car = true;
+
+                        if (minLane == 0)
+                        {
+                            if (nearest_car_ds < 30) { follow_car = true; }
+                        }
+                        else if (minLane == 1)
+                        {
+                            lane = 1;
+                        }
+                        else if (minLane == 2)
+                        {
+                            if (costLane1 < 1000000)
+                            {
+                                lane = 2;
+                            }
+                            else
+                            {
+                                if (nearest_car_ds < 30) { follow_car = true; }
+                            }
+                        }
+
                         break;
                     }
                     case 1: {
-                        if (!lineIsBusy(car_s, 2, prev_size, sensor_fusion)) lane = 2;
-                        else if (!lineIsBusy(car_s, 0, prev_size, sensor_fusion)) lane = 0;
-                        else follow_car = true;
+
+                        if (minLane == 0)
+                        {
+                            lane = 0;
+                        }
+                        else if (minLane == 1)
+                        {
+                            if (nearest_car_ds < 30) { follow_car = true; }
+                        }
+                        else if (minLane == 2)
+                        {
+                            lane = 0;
+                        }
+
                         break;
                     }
                     case 2:
                     {
-                        if (!lineIsBusy(car_s, 1, prev_size, sensor_fusion)) lane = 1;
-                        else follow_car = true;
-                        break;
+                        if (minLane == 0)
+                        {
+                            if (costLane1 < 1000000)
+                            {
+                                lane = 0;
+                            }
+                            else
+                            {
+                                if (nearest_car_ds < 30) { follow_car = true; }
+                            }
+                        }
+                        else if (minLane == 1)
+                        {
+                            lane = 1;
+                        }
+                        else if (minLane == 2)
+                        {
+                            if (nearest_car_ds < 30) { follow_car = true; }
+                        }
                     }
                 }
 
                 if (follow_car)
                 {
-                    cout << "nearest_car_ds: " << nearest_car_ds << endl;
                     double deltaV = nearest_car_speed - car_speed;
-                    cout << "delta v: " << deltaV << endl;
 
                     if (abs(deltaV) < 0.1)
                     {
@@ -392,9 +521,7 @@ int main() {
                     else
                     {
                         double t = abs(4*(nearest_car_ds - 10) / deltaV);
-                        cout << "t: " << t << endl;
                         a = deltaV * 0.447 / t;
-                        cout << "a: " << a << endl;
                     }
                 }
             }
@@ -465,17 +592,26 @@ int main() {
             }
 
             // In Frenet add evently 30m spaced points ahead of the starting reference
-            vector<double> next_wp0 = getXY(car_s+30, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            vector<double> next_wp0 = getXY(car_s+50, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
             vector<double> next_wp1 = getXY(car_s+60, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
-            vector<double> next_wp2 = getXY(car_s+90, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            vector<double> next_wp2 = getXY(car_s+70, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            vector<double> next_wp3 = getXY(car_s+80, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            vector<double> next_wp4 = getXY(car_s+90, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
+            vector<double> next_wp5 = getXY(car_s+100, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
 
             ptsx.push_back(next_wp0[0]);
             ptsx.push_back(next_wp1[0]);
             ptsx.push_back(next_wp2[0]);
+            ptsx.push_back(next_wp3[0]);
+            ptsx.push_back(next_wp4[0]);
+            ptsx.push_back(next_wp5[0]);
 
             ptsy.push_back(next_wp0[1]);
             ptsy.push_back(next_wp1[1]);
             ptsy.push_back(next_wp2[1]);
+            ptsy.push_back(next_wp3[1]);
+            ptsy.push_back(next_wp4[1]);
+            ptsy.push_back(next_wp5[1]);
 
             for (int i = 0; i < ptsx.size(); i++)
             {
@@ -504,7 +640,7 @@ int main() {
             }
 
             // Calculate how to break up spline so that we travel at our desired reference velocity
-            double target_x = 30.0;
+            double target_x = 50.0;
             double target_y = s(target_x);
             double target_dist = sqrt(target_x * target_x + target_y * target_y);
 
