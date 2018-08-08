@@ -165,138 +165,6 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 
 }
 
-bool lineIsBusy(double car_s, int lane, int prev_size, vector<vector<double>> sensor_fusion)
-{
-    bool isBusy = false;
-    for(int i = 0; i < sensor_fusion.size(); i++) {
-
-        // Car is in right lane
-        float d = sensor_fusion[i][6];
-
-        if (d < (2 + 4 * lane + 2) && d > (2 + 4 * lane - 2))
-        {
-            double vx = sensor_fusion[i][3];
-            double vy = sensor_fusion[i][4];
-            double check_speed = sqrt(vx * vx + vy * vy);
-            double check_car_s = sensor_fusion[i][5];
-
-            check_car_s += prev_size * 0.02 * check_speed;
-
-            if (check_car_s > car_s-4 && check_car_s-car_s < 10)
-            {
-                isBusy = true;
-            }
-        }
-    }
-
-    return isBusy;
-}
-
-void radar(double car_s, int prev_size, vector<vector<double>> sensor_fusion)
-{
-    int step = 5;
-    for (int row = 12; row > -3; --row)
-    {
-        bool l0 = false;
-        bool l1 = false;
-        bool l2 = false;
-
-        for(int i = 0; i < sensor_fusion.size(); i++)
-        {
-
-            float d = sensor_fusion[i][6];
-            double vx = sensor_fusion[i][3];
-            double vy = sensor_fusion[i][4];
-            double check_speed = sqrt(vx * vx + vy * vy);
-            double check_car_s = sensor_fusion[i][5];
-            check_car_s += prev_size * 0.02 * check_speed;
-
-            double deltaS = check_car_s-car_s;
-            if (deltaS < row * step && deltaS > (row - 1) * step)
-            {
-                if (!l0) l0 = (d < (2 + 4 * 0 + 2) && d > (2 + 4 * 0 - 2));
-                if (!l1) l1 = (d < (2 + 4 * 1 + 2) && d > (2 + 4 * 1 - 2));
-                if (!l2) l2 = (d < (2 + 4 * 2 + 2) && d > (2 + 4 * 2 - 2));
-            }
-
-        }
-
-        string lane0 = (l0 ? "x" : " ");
-        string lane1 = (l1 ? "x" : " ");
-        string lane2 = (l2 ? "x" : " ");
-
-        if (row == 0) lane1 = "0";
-
-        cout << "|" << lane0 << "|" << lane1 << "|" << lane2 << "|" << endl;
-    }
-
-    cout << endl;
-    cout << endl;
-}
-
-vector<vector<double>> getAllCarsInLane(double car_s, int lane, int prev_size, vector<vector<double>> sensor_fusion)
-{
-    vector<vector<double>> ret;
-    for(int i = 0; i < sensor_fusion.size(); i++)
-    {
-        float d = sensor_fusion[i][6];
-        double vx = sensor_fusion[i][3];
-        double vy = sensor_fusion[i][4];
-        double check_speed = sqrt(vx * vx + vy * vy);
-        double check_car_s = sensor_fusion[i][5];
-        check_car_s += prev_size * 0.02 * check_speed;
-
-        if (check_car_s > car_s-4)
-        {
-            if (d < (2 + 4 * lane + 2) && d > (2 + 4 * lane - 2))
-            {
-                ret.push_back(sensor_fusion[i]);
-            }
-        }
-    }
-
-    return ret;
-}
-
-double getCost(double car_s, int lane, int prev_size, vector<vector<double>> sensor_fusion)
-{
-    double cost = 0;
-    auto carsInLane = getAllCarsInLane(car_s, lane, prev_size, sensor_fusion);
-
-    if (carsInLane.size() > 0)
-    {
-        vector<double> nearestCar = carsInLane[0];
-        for(int i = 1; i < carsInLane.size(); i++)
-        {
-            if (carsInLane[i][5] < nearestCar[5])
-            {
-                nearestCar = carsInLane[i];
-            }
-        }
-
-        cost += 200.0 / nearestCar[5];
-
-        if (nearestCar[5] < car_s + 15)
-        {
-            cost += 1000000;
-        }
-    }
-
-    return cost;
-}
-
-vector<double> getAllCosts(double car_s, int prev_size, vector<vector<double>> sensor_fusion)
-{
-    vector<double> costs;
-
-    for (int i = 0; i < 3; i++)
-    {
-        costs.push_back(getCost(car_s, i, prev_size, sensor_fusion));
-    }
-
-    return  costs;
-}
-
 vector<Vehicle> getAllVehiclesInLane(double car_s, double car_speed, int lane, int prev_size, vector<vector<double>> sensor_fusion)
 {
     vector<Vehicle> ret;
@@ -520,22 +388,17 @@ int main() {
           	bool follow_car = false;
             double speed_limit = 49.5;
 
-            //double nearest_car_ds = 500;
-            //double nearest_car_speed = 0;
-
             if (ref_vel >= 20)
             {
+                // Calculate best lane
                 lane = getTheBestLane(car_s, car_speed, lane, prev_size, sensor_fusion);
             }
 
+            // Get nearest vehicle in lane
             Vehicle nv = getNearestVehicle(car_s, car_speed, lane, prev_size, sensor_fusion);
 
             double deltaV = nv.speed - car_speed;
-
             double th = deltaV * 0.447 * deltaV * 0.447 / (2 * 5) + 30;
-
-            //cout << nv.delta_s << " " << nv.speed << " " << car_speed << " " << th << endl;
-
 
             if (nv.delta_s < th)
             {
