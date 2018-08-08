@@ -9,6 +9,7 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
 #include "Spline/src/spline.h"
+#include "vehicle.h"
 
 using namespace std;
 
@@ -233,7 +234,7 @@ void radar(double car_s, int prev_size, vector<vector<double>> sensor_fusion)
     cout << endl;
 }
 
-vector<vector<double>> getAllCarsInLane(double car_s, int lane, int prev_size,  vector<vector<double>> sensor_fusion)
+vector<vector<double>> getAllCarsInLane(double car_s, int lane, int prev_size, vector<vector<double>> sensor_fusion)
 {
     vector<vector<double>> ret;
     for(int i = 0; i < sensor_fusion.size(); i++)
@@ -296,6 +297,139 @@ vector<double> getAllCosts(double car_s, int prev_size, vector<vector<double>> s
     return  costs;
 }
 
+vector<Vehicle> getAllVehiclesInLane(double car_s, double car_speed, int lane, int prev_size, vector<vector<double>> sensor_fusion)
+{
+    vector<Vehicle> ret;
+
+    for(int i = 0; i < sensor_fusion.size(); i++)
+    {
+        float d = sensor_fusion[i][6];
+        double vx = sensor_fusion[i][3];
+        double vy = sensor_fusion[i][4];
+        double check_speed = sqrt(vx * vx + vy * vy) * 2.24;
+        double check_car_s = sensor_fusion[i][5];
+        //check_car_s += prev_size * 0.02 * check_speed;
+
+        //car_s = car_s + prev_size * 0.02 * car_speed;
+        double delta = check_car_s - car_s;
+
+        if (delta > -20)
+        {
+            if (d < (4 + 4 * lane) && d > (4 * lane))
+            {
+                Vehicle v = Vehicle();
+                v.delta_s = delta;
+                v.speed = check_speed;
+                ret.push_back(v);
+            }
+        }
+    }
+
+    return ret;
+}
+
+Vehicle getNearestVehicle(double car_s, double car_speed, int lane, int prev_size, vector<vector<double>> sensor_fusion)
+{
+    vector<Vehicle> vehicles = getAllVehiclesInLane(car_s, car_speed, lane, prev_size, sensor_fusion);
+
+    if (vehicles.size() == 0)
+    {
+        Vehicle v = Vehicle();
+        v.delta_s = 1000;
+        v.speed = 0;
+        return v;
+    }
+    sort(vehicles.begin(), vehicles.end());
+
+    return vehicles[0];
+}
+
+Vehicle getNearestVehicle(vector<Vehicle> vehicles)
+{
+    if (vehicles.size() == 0)
+    {
+        Vehicle v = Vehicle();
+        v.delta_s = 1000;
+        v.speed = 0;
+        return v;
+    }
+    sort(vehicles.begin(), vehicles.end());
+
+    return vehicles[0];
+}
+
+int getTheBestLane(double car_s, double car_speed, int current_lane, int prev_size, vector<vector<double>> sensor_fusion)
+{
+    int cost_0 = 0;
+    int cost_1 = 0;
+    int cost_2 = 0;
+
+    vector<Vehicle> vehiclesInLane0 = getAllVehiclesInLane(car_s, car_speed, 0, prev_size, sensor_fusion);
+    vector<Vehicle> vehiclesInLane1 = getAllVehiclesInLane(car_s, car_speed, 1, prev_size, sensor_fusion);
+    vector<Vehicle> vehiclesInLane2 = getAllVehiclesInLane(car_s, car_speed, 2, prev_size, sensor_fusion);
+    Vehicle nearestVehicleInLane0 = getNearestVehicle(vehiclesInLane0);
+    Vehicle nearestVehicleInLane1 = getNearestVehicle(vehiclesInLane1);
+    Vehicle nearestVehicleInLane2 = getNearestVehicle(vehiclesInLane2);
+
+    if (nearestVehicleInLane0.delta_s < 30) { cost_0 += 1000000; }
+    else
+    {
+        cost_0 += 600.0 / nearestVehicleInLane0.delta_s;
+        if (current_lane == 2 && nearestVehicleInLane1.delta_s < 22) cost_0 += 1000000;
+    }
+
+    if (nearestVehicleInLane1.delta_s < 30) { cost_1 += 1000000; }
+    else { cost_1 += 600.0 / nearestVehicleInLane1.delta_s; }
+
+    if (nearestVehicleInLane2.delta_s < 30) { cost_2 += 1000000; }
+    else
+    {
+        cost_2 += 600.0 / nearestVehicleInLane2.delta_s;
+        if (current_lane == 0 && nearestVehicleInLane1.delta_s < 22) cost_2 += 1000000;
+    }
+
+    cost_0 += abs(current_lane - 0) * 10;
+    cost_1 += abs(current_lane - 1) * 10;
+    cost_2 += abs(current_lane - 2) * 10;
+
+    int bestLine = 0;
+
+    if (cost_0 < cost_1)
+    {
+        if (cost_0 < cost_2)
+        {
+            bestLine = 0;
+        }
+        else
+        {
+            if (cost_1 < cost_2)
+            {
+                bestLine = 1;
+            }
+            else
+            {
+                bestLine =2;
+            }
+        }
+    }
+    else
+    {
+        if (cost_1 < cost_2)
+        {
+            bestLine = 1;
+        }
+        else
+        {
+            bestLine = 2;
+        }
+    }
+
+    cout << "cost_0: " << cost_0 << " cost_1: " << cost_1 << " cost_2: " << cost_2 << " best: " << bestLine << endl;
+
+    return bestLine;
+}
+
+
 int main() {
   uWS::Hub h;
 
@@ -335,7 +469,7 @@ int main() {
 
   int lane = 1;
   double ref_vel = 0;
-  double a = 2.4;
+  double a = 20;
 
   h.onMessage([&ref_vel,&map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy,&lane, &a](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -386,153 +520,48 @@ int main() {
           	bool follow_car = false;
             double speed_limit = 49.5;
 
-            double nearest_car_ds = 500;
-            double nearest_car_speed = 0;
-            double nearest_car_s = 0;
+            //double nearest_car_ds = 500;
+            //double nearest_car_speed = 0;
 
-
-            // check line infront of us
-            for(int i = 0; i < sensor_fusion.size(); i++)
+            if (ref_vel >= 20)
             {
-                float d = sensor_fusion[i][6];
-                if (d < (2+4*lane+2) && d > (2+4*lane-2))
-                {
-                    double vx = sensor_fusion[i][3];
-                    double vy = sensor_fusion[i][4];
-                    double check_speed = sqrt(vx*vx+vy*vy) / 0.447;
-                    double check_car_s = sensor_fusion[i][5];
-                    //check_car_s += prev_size * 0.02 * check_speed;
-
-                    double deltaS = check_car_s - car_s;
-                    if (deltaS > -5)
-                    {
-                        if (nearest_car_ds > deltaS)
-                        {
-                            nearest_car_ds = deltaS;
-                            nearest_car_speed = check_speed;
-                            nearest_car_s = check_car_s;
-                        }
-                    }
-                }
+                lane = getTheBestLane(car_s, car_speed, lane, prev_size, sensor_fusion);
             }
 
-            if (nearest_car_ds <= 100)
+            Vehicle nv = getNearestVehicle(car_s, car_speed, lane, prev_size, sensor_fusion);
+
+            double deltaV = nv.speed - car_speed;
+
+            double th = deltaV * 0.447 * deltaV * 0.447 / (2 * 5) + 30;
+
+            //cout << nv.delta_s << " " << nv.speed << " " << car_speed << " " << th << endl;
+
+
+            if (nv.delta_s < th)
             {
-                bool follow_car = false;
-                vector<double> costs = getAllCosts(car_s, prev_size, sensor_fusion);
-                double costLane0 = costs[0];
-                double costLane1 = costs[1];
-                double costLane2 = costs[2];
-
-                int minLane = 0;
-
-                if (costLane1 < costLane0)
-                {
-                    if (costLane1 < costLane2)
-                    {
-                        minLane = 1;
-                    }
-                    else if (costLane2 < costLane0)
-                    {
-                        minLane = 2;
-                    }
-                }
-                else if (costLane2 < costLane0)
-                {
-                    minLane = 2;
-                }
-
-                switch (lane)
-                {
-                    case 0: {
-
-                        if (minLane == 0)
-                        {
-                            if (nearest_car_ds < 30) { follow_car = true; }
-                        }
-                        else if (minLane == 1)
-                        {
-                            lane = 1;
-                        }
-                        else if (minLane == 2)
-                        {
-                            if (costLane1 < 1000000)
-                            {
-                                lane = 2;
-                            }
-                            else
-                            {
-                                if (nearest_car_ds < 30) { follow_car = true; }
-                            }
-                        }
-
-                        break;
-                    }
-                    case 1: {
-
-                        if (minLane == 0)
-                        {
-                            lane = 0;
-                        }
-                        else if (minLane == 1)
-                        {
-                            if (nearest_car_ds < 30) { follow_car = true; }
-                        }
-                        else if (minLane == 2)
-                        {
-                            lane = 0;
-                        }
-
-                        break;
-                    }
-                    case 2:
-                    {
-                        if (minLane == 0)
-                        {
-                            if (costLane1 < 1000000)
-                            {
-                                lane = 0;
-                            }
-                            else
-                            {
-                                if (nearest_car_ds < 30) { follow_car = true; }
-                            }
-                        }
-                        else if (minLane == 1)
-                        {
-                            lane = 1;
-                        }
-                        else if (minLane == 2)
-                        {
-                            if (nearest_car_ds < 30) { follow_car = true; }
-                        }
-                    }
-                }
-
-                if (follow_car)
-                {
-                    double deltaV = nearest_car_speed - car_speed;
-
-                    if (abs(deltaV) < 0.1)
-                    {
-                        ref_vel = nearest_car_speed;
-                        a = 0;
-                    }
-                    else
-                    {
-                        double t = abs(4*(nearest_car_ds - 10) / deltaV);
-                        a = deltaV * 0.447 / t;
-                    }
-                }
-            }
-            else a = 2.4;
-
-            if (nearest_car_ds <= 5)
-            {
-                a = -2.4;
+                follow_car = true;
             }
 
-            double inc = a / 5;
+            if (follow_car)
+            {
+                if (abs(deltaV) < 0.4)
+                {
+                    ref_vel = nv.speed;
+                    a = 0;
+                }
+                else
+                {
+                    a = -5;
+                }
+            }
+            else a = 20;
+
+            if (nv.delta_s < 7)
+            {
+                a = -20;
+            }
+
+            double inc = a / 50;
             if (inc > 0)
             {
                 if (ref_vel + inc <= 49.5)
@@ -647,8 +676,8 @@ int main() {
             double x_add_on = 0;
 
             // Fill up the rest of our path planner after filling it with previous points, here we will
-            // always output 50 points
-            for (int i = 1; i <= 50-previous_path_x.size(); i++)
+            // always output 30 points
+            for (int i = 1; i <= 30-previous_path_x.size(); i++)
             {
                 double N = target_dist / (0.02 * ref_vel / 2.24);
                 double x_point = x_add_on + target_x / N;
